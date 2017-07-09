@@ -51,7 +51,6 @@ class Server(threading.Thread):
 			msg = msg.decode('utf-8')
 			ws_queue.put(msg)
 		else:
-			print(msg)
 			socket.send(msg)
 
 	def recv(self, size=10240):
@@ -196,6 +195,7 @@ class Server(threading.Thread):
 		self.socket.close()
 		if self.userId:
 			log(self.userId+' logged out. (%s:%s)' % self.address)
+			self.relay({'method':'uesr_disconnected', 'data':{'userId':self.userId}}, self.roomId)
 		else:
 			log('%s:%s disconnected.' % self.address)
 		if self.userId:
@@ -379,6 +379,7 @@ class AsyncServer(Server):
 		self.socket.close()
 		if self.userId:
 			log(self.userId+' logged out. (%s:%s)' % self.address)
+			await self.relay({'method':'uesr_disconnected', 'data':{'userId':self.userId}}, self.roomId)
 		else:
 			log('%s:%s disconnected.' % self.address)
 if USE_SSL:
