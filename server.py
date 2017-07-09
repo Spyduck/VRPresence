@@ -45,10 +45,13 @@ class Server(threading.Thread):
 	def send(self, socket, msg, ws_queue=None):
 		if not isinstance(msg, (bytes, bytearray)):
 			msg = json.dumps(msg,separators=(',', ':')).encode('utf-8') + b'\r\n'
+		else:
+			msg = msg + b'\r\n'
 		if ws_queue:
 			msg = msg.decode('utf-8')
 			ws_queue.put(msg)
 		else:
+			print(msg)
 			socket.send(msg)
 
 	def recv(self, size=10240):
@@ -150,7 +153,7 @@ class Server(threading.Thread):
 					except:
 						pass
 		else:
-			for uid in userIds:
+			for uid in userIds.copy():
 				if uid != self.userId:
 					if userIds[uid].get('roomId',None) == roomId or roomId in userIds[uid].get('subscribed',[]):
 						try:
@@ -324,7 +327,7 @@ class AsyncServer(Server):
 		if isinstance(msg, dict):
 			msg = json.dumps(msg,separators=(',', ':')).encode('utf-8')
 		if roomId is None:
-			for uid in userIds:
+			for uid in userIds.copy():
 				if uid != self.userId:
 					try:
 						await self.send(userIds[uid]['socket'].socket, msg, userIds[uid]['socket'].use_ws)
@@ -420,6 +423,7 @@ async def process_queue(future):
 				#log(traceback.format_exc())
 	for q in rem_queues:
 		queues.remove(q)
+	await asyncio.sleep(0.02)
 	future.set_result(True)
 
 if USE_SSL:
@@ -433,7 +437,7 @@ if USE_SSL:
 			asyncio.ensure_future(process_queue(future))
 			loop.run_until_complete(future)
 			loop.run_until_complete(start_server)
-			asyncio.sleep(0.1)
+			#asyncio.sleep(0.1)
 	finally:
 		loop.close()
 else:
