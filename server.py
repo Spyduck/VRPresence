@@ -27,6 +27,8 @@ lock = threading.Lock()
 def log(msg):
 	try:
 		print(msg)
+		with open('log.txt','a') as f:
+			f.write(msg+'\n')
 	except:
 		pass
 
@@ -401,7 +403,6 @@ def accept_ssl_connections():
 		loop.run_forever()
 	finally:
 		loop.close()
-
 
 
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
