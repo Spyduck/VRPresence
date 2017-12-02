@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 
-import socket, threading, json, traceback, configparser, os, threading, socket, ssl, queue
+import socket, threading, json, traceback, configparser, os, threading, socket, ssl, queue, time
 import asyncio, websockets
+
+abspath = os.path.abspath(__file__)
+dname = os.path.dirname(abspath)
+os.chdir(dname)
 
 DOMAIN = 'localhost'
 PORT = 5566
@@ -121,8 +125,10 @@ class Server(threading.Thread):
 				okay = True
 			elif method == 'chat':
 				if data:
-					log(self.userId + ' ' + data)
-					self.relay({'method':'user_chat','data':{'userId':self.userId, 'message':data}},self.roomId)
+					log(self.userId + ' ' + str(data))
+					message = data
+					if len(message) > 0:
+						self.relay({'method':'user_chat','data':{'userId':self.userId, 'message':{'data':message}}},self.roomId)
 				else:
 					return False
 			elif method == 'portal':
@@ -133,8 +139,8 @@ class Server(threading.Thread):
 					self.relay( {'method':'user_portal', 'data':{'roomId':self.roomId, 'userId':self.userId, 'url':url, 'pos':pos, 'fwd':fwd}}, self.roomId)
 				else:
 					return False
-			elif method == 'users_online':
-				return False # TODO
+			elif method == 'users_online' and False:
+				okay = True # TODO
 			else:
 				return False
 		if error:
@@ -151,7 +157,9 @@ class Server(threading.Thread):
 				if uid != self.userId:
 					try:
 						self.send(userIds[uid]['socket'].socket, msg, ws_queue=userIds[uid].get('queue',None))
-					except:
+					except Exception as e:
+						#log(e)
+						log(traceback.format_exc())
 						pass
 		else:
 			for uid in userIds.copy():
@@ -159,7 +167,7 @@ class Server(threading.Thread):
 					if userIds[uid].get('roomId',None) == roomId or roomId in userIds[uid].get('subscribed',[]):
 						try:
 							self.send(userIds[uid]['socket'].socket, msg, ws_queue=userIds[uid].get('queue',None))
-						except:
+						except Exception as e:
 							pass
 
 	def run(self):
@@ -169,16 +177,25 @@ class Server(threading.Thread):
 			try:
 				try:
 					data = self.recv(1048576)
-				except (ConnectionAbortedError, ConnectionResetError, OSError) as e:
-					log(e)
+				except (ConnectionAbortedError, ConnectionResetError, OSError, BrokenPipeError) as e:
+					#log(e)
+					log(traceback.format_exc())
 					break
 				if not data:
+					running = False
 					break
 				data = data.splitlines(keepends=True)
+				loaded = False
 				try:
-					data[0] = self.message+data[0]
+					json.loads(data[0])
+					loaded = True
 				except:
-					pass
+					loaded = False
+				if not loaded:
+					try:
+						data[0] = self.message+data[0]
+					except:
+						pass
 				for line in data:
 					if line[-1:] != b'\n':
 						self.message += line
@@ -193,7 +210,6 @@ class Server(threading.Thread):
 							log(traceback.format_exc())
 			except KeyboardInterrupt:
 				running = False
-				break
 		self.socket.close()
 		if self.userId:
 			log(self.userId+' logged out. (%s:%s)' % self.address)
@@ -406,7 +422,14 @@ def accept_ssl_connections():
 
 
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.bind((DOMAIN, PORT))
+bound = False
+while bound == False:
+	try:
+		s.bind((DOMAIN, PORT))
+		bound = True
+	except OSError as e:
+		time.sleep(5)
+		log(e)
 s.listen()
 
 @asyncio.coroutine
