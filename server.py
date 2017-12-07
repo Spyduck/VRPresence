@@ -213,7 +213,7 @@ class Server(threading.Thread):
 		self.socket.close()
 		if self.userId:
 			log(self.userId+' logged out. (%s:%s)' % self.address)
-			self.relay({'method':'uesr_disconnected', 'data':{'userId':self.userId}}, self.roomId)
+			self.relay({'method':'user_disconnected', 'data':{'userId':self.userId}}, self.roomId)
 		else:
 			log('%s:%s disconnected.' % self.address)
 		if self.userId:
@@ -397,7 +397,7 @@ class AsyncServer(Server):
 		self.socket.close()
 		if self.userId:
 			log(self.userId+' logged out. (%s:%s)' % self.address)
-			await self.relay({'method':'uesr_disconnected', 'data':{'userId':self.userId}}, self.roomId)
+			await self.relay({'method':'user_disconnected', 'data':{'userId':self.userId}}, self.roomId)
 		else:
 			log('%s:%s disconnected.' % self.address)
 if USE_SSL:
