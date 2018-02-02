@@ -1,12 +1,7 @@
 #!/usr/bin/env python3
 
 import socket, threading, json, traceback, configparser, os, ssl, queue, time
-import asyncio, websockets
-
-addon = {}
-if os.path.exists('vrpresence_addon.py'):
-	import vrpresence_addon
-	addon = vrpresence_addon.addon()
+import asyncio, websockets, importlib
 
 abspath = os.path.abspath(__file__)
 dname = os.path.dirname(abspath)
@@ -18,7 +13,7 @@ PORT_SSL = 5567
 USE_SSL = False
 CERT = ''
 KEY = ''
-
+ADDONS_LIST = ''
 if os.path.exists('server.cfg'):
 	config = configparser.RawConfigParser()
 	config.read('server.cfg')
@@ -28,6 +23,15 @@ if os.path.exists('server.cfg'):
 	USE_SSL = config.getboolean('DEFAULT','use_ssl',fallback=False)
 	CERT = config.get('DEFAULT','cert',fallback='')
 	KEY = config.get('DEFAULT','key',fallback='')
+	ADDONS_LIST = config.get('DEFAULT','addons',fallback='')
+
+addons = []
+for addon_name in ADDONS_LIST.split(','):
+	if len(addon_name) > 0 and os.path.exists(addon_name+'.py'):
+		module = importlib.import_module(addon_name)
+		module_class = module.addon()
+		addons.append(module_class)
+
 
 userIds = {}
 queues = []
@@ -42,6 +46,17 @@ def log(msg, silent=False):
 			f.write(str(msg, 'utf-8')+'\n')
 	except:
 		pass
+
+# call function in each addon
+# usage example:
+#	pass_to_addons('user_chat', userId='name', message='hello')
+def pass_to_addons(function, **kwargs):
+	global addons
+	if function is not None and kwargs is not None:
+		for addon in addons:
+			if function in dir(addon):
+				func = getattr(addon, function)
+				func(**kwargs)
 
 class Server(threading.Thread):
 	use_ws = False
@@ -60,7 +75,6 @@ class Server(threading.Thread):
 			msg = json.dumps(msg,separators=(',', ':')).encode('utf-8') + b'\r\n'
 		else:
 			msg = msg + b'\r\n'
-		log(msg)
 		if ws_queue:
 			msg = msg.decode('utf-8')
 			ws_queue.put(msg)
@@ -135,9 +149,9 @@ class Server(threading.Thread):
 				okay = True
 			elif method == 'chat':
 				if data:
-					log(self.userId + ' ' + str(data))
 					message = data
 					if len(message) > 0:
+						pass_to_addons('user_chat', userId=self.userId, message=message)
 						self.relay({'method':'user_chat','data':{'userId':self.userId, 'message':{'data':message}}},self.roomId)
 				else:
 					return False
@@ -206,7 +220,6 @@ class Server(threading.Thread):
 					self.running = False
 					break
 				data = self.message.splitlines(keepends=True)
-				print(data)
 				loaded = False
 				try:
 					json.loads(data[0].decode('utf-8',errors='replace'))
@@ -367,7 +380,7 @@ class AsyncServer(Server):
 				okay = True
 			elif method == 'chat':
 				if data:
-					log(self.userId + ' ' + data)
+					pass_to_addons('user_chat', userId=self.userId, message=data)
 					await self.relay({'method':'user_chat','data':{'userId':self.userId, 'message':data}},self.roomId)
 				else:
 					return False
