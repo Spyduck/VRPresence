@@ -11,7 +11,7 @@ class addon():
 		self.rooms.append(self.md5('https://vesta.janusvr.com/spyduck/celestial-events-dreamscapes-1'))
 		
 	def user_chat(self, userId=None, message=None, thread=None):
-		self.log(userId+': '+message)
+		pass
 	
 	def logon(self, userId=None, thread=None):
 		pass
