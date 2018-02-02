@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 
-import socket, threading, json, traceback, configparser, os, threading, socket, ssl, queue, time
+import socket, threading, json, traceback, configparser, os, ssl, queue, time
 import asyncio, websockets
+
+addon = {}
+if os.path.exists('vrpresence_addon.py'):
+	import vrpresence_addon
+	addon = vrpresence_addon.addon()
 
 abspath = os.path.abspath(__file__)
 dname = os.path.dirname(abspath)
@@ -27,12 +32,14 @@ if os.path.exists('server.cfg'):
 userIds = {}
 queues = []
 lock = threading.Lock()
-
-def log(msg):
+client_list = []
+disconnect_all = False
+def log(msg, silent=False):
 	try:
-		print(msg)
-		with open('log.txt','a') as f:
-			f.write(msg+'\n')
+		if silent == False:
+			print(msg)
+		with open('vrpresence.log','a') as f:
+			f.write(str(msg, 'utf-8')+'\n')
 	except:
 		pass
 
@@ -53,14 +60,17 @@ class Server(threading.Thread):
 			msg = json.dumps(msg,separators=(',', ':')).encode('utf-8') + b'\r\n'
 		else:
 			msg = msg + b'\r\n'
+		log(msg)
 		if ws_queue:
 			msg = msg.decode('utf-8')
 			ws_queue.put(msg)
 		else:
 			socket.send(msg)
 
-	def recv(self, size=10240):
-		return self.socket.recv(size)
+	def recv(self, size=1048576):
+		if self.socket:
+			return self.socket.recv(size)
+		return None
 
 	def process(self, msg):
 		error = None
@@ -171,31 +181,40 @@ class Server(threading.Thread):
 							pass
 
 	def run(self):
+		global disconnect_all
+		lock.acquire()
+		if self not in client_list:
+			client_list.append(self)
+		lock.release()
 		log('%s:%s connected.' % self.address)
-		running = True
-		while running:
+		self.running = True
+		while self.running:
+			if disconnect_all:
+				self.disconnect()
 			try:
 				try:
 					data = self.recv(1048576)
+					if data is not None and len(data) > 0:
+						self.message += data
+						if b'\n' not in data:
+							continue
 				except (ConnectionAbortedError, ConnectionResetError, OSError, BrokenPipeError) as e:
 					#log(e)
 					log(traceback.format_exc())
 					break
 				if not data:
-					running = False
+					self.running = False
 					break
-				data = data.splitlines(keepends=True)
+				data = self.message.splitlines(keepends=True)
+				print(data)
 				loaded = False
 				try:
-					json.loads(data[0])
+					json.loads(data[0].decode('utf-8',errors='replace'))
 					loaded = True
 				except:
 					loaded = False
 				if not loaded:
-					try:
-						data[0] = self.message+data[0]
-					except:
-						pass
+					continue
 				for line in data:
 					if line[-1:] != b'\n':
 						self.message += line
@@ -203,24 +222,49 @@ class Server(threading.Thread):
 					else:
 						self.message = b''
 						try:
-							if not self.process(json.loads(line.decode('utf-8',errors='replace'))):
+							packet = json.loads(line.decode('utf-8',errors='replace'))
+						except:
+							#log(line.decode('utf-8',errors='replace'))
+							log(traceback.format_exc())
+							self.send(self.socket, {'method':'error','data':{'message':'Unable to parse last message'}})
+							continue
+						try:
+							if not self.process(packet):
 								self.send(self.socket, {'method':'error','data':{'message':'Unable to parse last message'}})
 						except Exception:
-							log(line)
 							log(traceback.format_exc())
 			except KeyboardInterrupt:
-				running = False
-		self.socket.close()
+				disconnect_all = True
+				self.running = False
+		self.disconnect()
+	def disconnect(self):
+		global disconnect_all
+		global client_list
+		self.running = False
+		try:
+			self.socket.close()
+		except:
+			pass
+		lock.acquire()
 		if self.userId:
 			log(self.userId+' logged out. (%s:%s)' % self.address)
-			self.relay({'method':'user_disconnected', 'data':{'userId':self.userId}}, self.roomId)
+			try:
+				self.relay({'method':'user_disconnected', 'data':{'userId':self.userId}}, self.roomId)
+			except:
+				pass
 		else:
 			log('%s:%s disconnected.' % self.address)
-		if self.userId:
-			lock.acquire()
+		if self.userId and self.userId in userIds:
 			del userIds[self.userId]
-			lock.release()
-
+		try:
+			if self in client_list:
+				client_list.remove(self)
+		except:
+			log(traceback.format_exc())
+			pass
+		lock.release()
+		self.socket = None
+	
 class AsyncServer(Server):
 	use_ws = True
 	ws_queue = queue.Queue()
@@ -245,8 +289,9 @@ class AsyncServer(Server):
 			socket.send(msg)
 
 	async def recv(self):
-		data = (await self.socket.recv()).encode('utf-8')
-		return data
+		if self.socket:
+			return (await self.socket.recv()).encode('utf-8')
+		return None
 
 	async def setup(self, socket, address):
 		self.socket = socket
@@ -255,6 +300,7 @@ class AsyncServer(Server):
 		self.running = True
 		lock.acquire()
 		queues.append({'socket':self.socket,'queue':self.ws_queue})
+		client_list.append(self)
 		lock.release()
 		await self.run()
 
@@ -362,44 +408,77 @@ class AsyncServer(Server):
 							pass
 
 	async def run(self):
+		global disconnect_all
 		log('%s:%s connected.' % self.address)
 		while self.running:
 			try:
-				data = await self.recv()
-			except (ConnectionAbortedError, ConnectionResetError, OSError, websockets.exceptions.ConnectionClosed) as e:
-				break
-			if not data:
-				break
-			data = data.splitlines(keepends=True)
-			try:
-				data[0] = self.message+data[0]
-			except:
-				pass
-			for line in data:
-				if line[-1:] != b'\n':
-					self.message += line
-					pass
-				else:
-					self.message = b''
-					try:
-						if not await self.process(json.loads(line.decode('utf-8',errors='replace'))):
-							await self.send(self.socket, {'method':'error','data':{'message':'Unable to parse last message'}})
-					except Exception:
-						log(line)
-						log(traceback.format_exc())
+				if disconnect_all:
+					self.disconnect()
+				try:
+					data = await self.recv()
+					if data is not None and len(data) > 0:
+						self.message += data
+						if b'\n' not in data:
+							continue
+				except (ConnectionAbortedError, ConnectionResetError, OSError, websockets.exceptions.ConnectionClosed) as e:
+					break
+				if not data:
+					break
+				data = data.splitlines(keepends=True)
+				try:
+					json.loads(data[0].decode('utf-8',errors='replace'))
+					loaded = True
+				except:
+					loaded = False
+				if not loaded:
+					continue
+				for line in data:
+					if line[-1:] != b'\n':
+						self.message += line
+						pass
+					else:
+						self.message = b''
+						try:
+							packet = json.loads(line.decode('utf-8',errors='replace'))
+						except:
+							log(traceback.format_exc())
+							self.send(self.socket, {'method':'error','data':{'message':'Unable to parse last message'}})
+							continue
+						try:
+							if not await self.process(packet):
+								await self.send(self.socket, {'method':'error','data':{'message':'Unable to parse last message'}})
+						except Exception:
+							log(line)
+							log(traceback.format_exc())
+			except KeyboardInterrupt:
+				disconnect_all = True
+		self.disconnect()
+	async def disconnect(self):
+		global disconnect_all
+		self.running = False
+		try:
+			self.socket.close()
+		except:
+			pass
 		lock.acquire()
-		if self.userId:
+		if self.userId and self.userId in userIds:
 			del userIds[self.userId]
 		for i in range(len(queues)-1):
 			if queues[i].get('socket') == self.socket:
 				queues.pop(i)
-		lock.release()
-		self.socket.close()
 		if self.userId:
 			log(self.userId+' logged out. (%s:%s)' % self.address)
 			await self.relay({'method':'user_disconnected', 'data':{'userId':self.userId}}, self.roomId)
 		else:
 			log('%s:%s disconnected.' % self.address)
+		try:
+			if self in client_list:
+				client_list.remove(self)
+		except:
+			pass
+		lock.release()
+		self.socket = None
+		
 if USE_SSL:
 	context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
 	context.load_cert_chain(certfile=CERT, keyfile=KEY)
@@ -408,15 +487,21 @@ async def ssl_connection(websocket, path):
 	s2 = await AsyncServer().setup(websocket, websocket.remote_address)
 
 def accept_connections():
-	while True:
-		Server(s.accept()).start()
+	global disconnect_all
+	while not disconnect_all:
+		serv = Server(s.accept())
+		if not disconnect_all:
+			serv.start()
 
 def accept_ssl_connections():
+	global disconnect_all
 	start_server = websockets.serve(ssl_connection, DOMAIN, PORT_SSL, ssl=context, subprotocols=['binary'])
 	loop = asyncio.get_event_loop()
 	try:
 		loop.run_until_complete(start_server)
 		loop.run_forever()
+	except KeyboardInterrupt:
+		disconnect_all = True
 	finally:
 		loop.close()
 
@@ -425,11 +510,14 @@ s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 bound = False
 while bound == False:
 	try:
+		s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 		s.bind((DOMAIN, PORT))
 		bound = True
 	except OSError as e:
 		time.sleep(5)
 		log(e)
+	except KeyboardInterrupt:
+		disconnect_all = True
 s.listen()
 
 @asyncio.coroutine
@@ -457,14 +545,23 @@ if USE_SSL:
 	start_server = websockets.serve(ssl_connection, DOMAIN, PORT_SSL, ssl=context, subprotocols=['binary'])
 	loop = asyncio.get_event_loop()
 	try:
-		while True:
+		while not disconnect_all:
 			future = asyncio.Future()
 			asyncio.ensure_future(process_queue(future))
 			loop.run_until_complete(future)
 			loop.run_until_complete(start_server)
 			#asyncio.sleep(0.1)
+	except KeyboardInterrupt:
+		disconnect_all = True
 	finally:
 		loop.close()
 else:
 	log('Presence server running on port '+str(PORT))
 	accept_connections()
+while len(client_list) > 0:
+	print('Waiting for client_list to clear...')
+
+	print(client_list)
+	time.sleep(5)
+s.shutdown(socket.SHUT_RDWR)
+s.close()
