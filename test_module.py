@@ -1,10 +1,21 @@
-
 class addon():
 	def __init__(self):
 		print('test_module Addon initialized')
 	
-	def user_chat(self, userId, message):
+	def user_chat(self, userId=None, message=None, thread=None):
 		self.log(userId+': '+message)
+	
+	def logon(self, userId=None, thread=None):
+		pass
+	
+	def user_move(self, data=None, thread=None):
+		pass
+	
+	def user_leave(self, userId=None, roomId=None, thread=None):
+		pass
+	
+	def user_enter(self, userId=None, roomId=None, thread=None):
+		pass
 	
 	def log(self, msg, silent=False):
 		try:

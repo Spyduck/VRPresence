@@ -109,6 +109,7 @@ class Server(threading.Thread):
 					lock.release()
 					okay = True
 					log(self.userId+' logged in. (%s:%s)' % self.address)
+					pass_to_addons('logon', userId=self.userId, thread=self)
 				else:
 					error = 'User name is already in use'
 			else:
@@ -119,13 +120,17 @@ class Server(threading.Thread):
 					new_method = user_methods[method]
 					new_data = data.copy()
 					new_data['_userId'] = self.userId
-					self.relay({'method':new_method, 'data':{'userId':self.userId, 'roomId':self.roomId, 'position':new_data}}, self.roomId)
+					self.data = new_data
+					pass_to_addons('user_move', data=new_data, thread=self)
+					self.relay({'method':new_method, 'data':{'userId':self.userId, 'roomId':self.roomId, 'position':self.data}}, self.roomId)
 				else:
 					return False
 			elif method == 'enter_room':
 				roomId = data.get('roomId',None)
 				if roomId:
 					okay = True
+					pass_to_addons('user_leave', userId=self.userId, roomId=self.roomId, thread=self)
+					pass_to_addons('user_enter', userId=self.userId, roomId=roomId, thread=self)
 					self.relay({'method':'user_leave', 'data':{'userId':self.userId,'roomId':roomId}}, self.roomId)
 					self.relay({'method':'user_enter', 'data':{'userId':self.userId,'roomId':roomId}}, roomId)
 					self.roomId = roomId
@@ -151,7 +156,7 @@ class Server(threading.Thread):
 				if data:
 					message = data
 					if len(message) > 0:
-						pass_to_addons('user_chat', userId=self.userId, message=message)
+						pass_to_addons('user_chat', userId=self.userId, message=message, thread=self)
 						self.relay({'method':'user_chat','data':{'userId':self.userId, 'message':{'data':message}}},self.roomId)
 				else:
 					return False
@@ -340,6 +345,7 @@ class AsyncServer(Server):
 					lock.release()
 					okay = True
 					log(self.userId+' logged in. (%s:%s)' % self.address)
+					pass_to_addons('logon', userId=self.userId, thread=self)
 				else:
 					error = 'User name is already in use'
 			else:
@@ -350,6 +356,7 @@ class AsyncServer(Server):
 					new_method = user_methods[method]
 					new_data = data.copy()
 					new_data['_userId'] = self.userId
+					pass_to_addons('user_move', data=new_data, thread=self)
 					await self.relay({'method':new_method, 'data':{'userId':self.userId, 'roomId':self.roomId, 'position':new_data}}, self.roomId)
 				else:
 					return False
@@ -357,6 +364,8 @@ class AsyncServer(Server):
 				roomId = data.get('roomId',None)
 				if roomId:
 					okay = True
+					pass_to_addons('user_leave', userId=self.userId, roomId=self.roomId, thread=self)
+					pass_to_addons('user_enter', userId=self.userId, roomId=roomId, thread=self)
 					await self.relay({'method':'user_leave', 'data':{'userId':self.userId,'roomId':roomId}}, self.roomId)
 					await self.relay({'method':'user_enter', 'data':{'userId':self.userId,'roomId':roomId}}, roomId)
 					self.roomId = roomId
@@ -380,7 +389,7 @@ class AsyncServer(Server):
 				okay = True
 			elif method == 'chat':
 				if data:
-					pass_to_addons('user_chat', userId=self.userId, message=data)
+					pass_to_addons('user_chat', userId=self.userId, message=data, thread=self)
 					await self.relay({'method':'user_chat','data':{'userId':self.userId, 'message':data}},self.roomId)
 				else:
 					return False
@@ -426,7 +435,7 @@ class AsyncServer(Server):
 		while self.running:
 			try:
 				if disconnect_all:
-					self.disconnect()
+					await self.disconnect()
 				try:
 					data = await self.recv()
 					if data is not None and len(data) > 0:
@@ -465,7 +474,7 @@ class AsyncServer(Server):
 							log(traceback.format_exc())
 			except KeyboardInterrupt:
 				disconnect_all = True
-		self.disconnect()
+		await self.disconnect()
 	async def disconnect(self):
 		global disconnect_all
 		self.running = False
