@@ -2,6 +2,9 @@ class addon():
 	def __init__(self):
 		print('test_module Addon initialized')
 	
+	def connect(self, thread=None):
+		pass
+	
 	def user_chat(self, userId=None, message=None, thread=None):
 		self.log(userId+': '+message)
 	

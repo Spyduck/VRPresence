@@ -78,7 +78,8 @@ class AsyncServer(threading.Thread):
 		else:
 			self.use_ws = True
 			#self.ws_queue = queue.Queue()
-		threading.Thread.__init__(self)
+		threading.Thread.__init__(self, daemon=True)
+		#self.daemon = True
 	async def send(self, socket, msg, use_ws=None):
 		if not isinstance(msg, (bytes, bytearray)):
 			msg = json.dumps(msg,separators=(',', ':')).encode('utf-8')
@@ -144,6 +145,8 @@ class AsyncServer(threading.Thread):
 		client_list.append(self)
 		lock.release()
 		log('%s:%s connected.' % self.address)
+		pass_to_addons('connect', thread=self)
+		
 		if future:
 			future.set_result(True)
 		if not serv:
@@ -238,17 +241,21 @@ class AsyncServer(threading.Thread):
 		return True
 
 	async def relay(self, msg, roomId=None):
+	
 		if isinstance(msg, dict):
 			msg = json.dumps(msg,separators=(',', ':')).encode('utf-8')
 		if roomId is None:
-			for uid in userIds.copy():
+			lock.acquire()
+			ids = userIds.copy()
+			lock.release()
+			for uid in ids:
 				if uid != self.userId:
 					try:
 						await self.send(userIds[uid]['socket'].socket, msg, userIds[uid]['socket'].use_ws)
 					except Exception as e:
 						log(e)
 		else:
-			for uid in userIds:
+			for uid in userIds.copy():
 				if uid != self.userId:
 					if userIds[uid].get('roomId',None) == roomId or roomId in userIds[uid].get('subscribed',[]):
 						try:
@@ -256,7 +263,6 @@ class AsyncServer(threading.Thread):
 
 						except Exception as e:
 							log(e)
-
 	async def run(self):
 		global disconnect_all
 		if self.running:
@@ -311,37 +317,38 @@ class AsyncServer(threading.Thread):
 	async def disconnect(self):
 		global disconnect_all
 		global client_list
+		global userIds
+		global threads
 		if not self.socket:
 			return
+		lock.acquire(timeout=1)
+		if self.userId:
+			log(self.userId+' logged out. (%s:%s)' % self.address)
+			try:
+				pass
+				#await self.relay({'method':'user_disconnected', 'data':{'userId':self.userId}}, self.roomId)
+			except Exception as e:
+				pass
+		else:
+			log('%s:%s disconnected.' % self.address)
 		self.running = False
 		try:
 			if self.use_ws:
 				await self.socket.close()
 			else:
+				#self.socket.shutdown(socket.SHUT_RD)
 				self.socket.close()
-		except:
-			pass
-		lock.acquire()
-		if self.userId:
-			log(self.userId+' logged out. (%s:%s)' % self.address)
-			try:
-				await self.relay({'method':'user_disconnected', 'data':{'userId':self.userId}}, self.roomId)
-			except Exception as e:
-				pass
-		else:
-			log('%s:%s disconnected.' % self.address)
+		except Exception as e:
+			print(e)
 		if self.serv and self.serv in threads:
 			threads.remove(self.serv)
 		if self.userId and self.userId in userIds:
 			del userIds[self.userId]
-		try:
-			if self in client_list:
-				client_list.remove(self)
-		except:
-			log(traceback.format_exc())
-			pass
-		lock.release()
+		if self in client_list:
+			client_list.remove(self)
 		self.socket = None
+		lock.release()
+		print(len(threads))
 
 if USE_SSL:
 	context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
