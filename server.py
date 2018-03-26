@@ -321,16 +321,17 @@ class AsyncServer(threading.Thread):
 		global threads
 		if not self.socket:
 			return
-		lock.acquire(timeout=1)
 		if self.userId:
 			log(self.userId+' logged out. (%s:%s)' % self.address)
 			try:
 				pass
+				# may need to comment for now
 				#await self.relay({'method':'user_disconnected', 'data':{'userId':self.userId}}, self.roomId)
 			except Exception as e:
 				pass
 		else:
 			log('%s:%s disconnected.' % self.address)
+		lock.acquire(timeout=2)
 		self.running = False
 		try:
 			if self.use_ws:
@@ -364,7 +365,7 @@ async def accept_connection_coro(future, loop):
 	asyncio.set_event_loop(loop)
 	if not disconnect_all:
 		sock = None
-		ready = select.select([s], [], [], 0.001)[0]
+		ready = select.select([s], [], [], 0)[0]
 		if len(ready) > 0:
 			try:
 				sock = s.accept()
